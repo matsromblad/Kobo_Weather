@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kobo Weather Station</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #f8f8f8;
+            color: #000;
+            margin: 0;
+            padding: 0;
+            text-align: center;
+            max-width: 100%;
+            overflow-x: hidden;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            width: 100%;
+        }
+        header {
+            font-size: 1.5em;
+            padding: 10px;
+            border-bottom: 1px solid #ccc;
+        }
+        .location {
+            font-size: 1.2em;
+            margin: 10px 0;
+        }
+        .datetime {
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        .current-weather {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 15px 0;
+            padding: 10px;
+            border-bottom: 1px solid #ccc;
+        }
+        .current-temp {
+            font-size: 3em;
+            margin: 10px 0;
+        }
+        .current-conditions {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+        .forecast-container {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+        }
+        .forecast-day {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        .day-name {
+            flex: 1;
+            text-align: left;
+            font-weight: bold;
+        }
+        .forecast-icon {
+            flex: 1;
+            text-align: center;
+        }
+        .forecast-temp {
+            flex: 1;
+            text-align: right;
+        }
+        .high-temp {
+            font-weight: bold;
+        }
+        .low-temp {
+            color: #666;
+            margin-left: 8px;
+        }
+        .settings {
+            margin-top: auto;
+            padding: 10px;
+            border-top: 1px solid #ccc;
+            font-size: 0.8em;
+        }
+        .error-message {
+            color: #666;
+            padding: 20px;
+            display: none;
+        }
+        /* Weather icons using simple ASCII/text characters for e-ink display */
+        .weather-icon {
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>Kobo Weather Station</header>
+        
+        <div class="location" id="location">Loading location...</div>
+        <div class="datetime" id="datetime"></div>
+        
+        <div class="current-weather">
+            <div class="current-temp" id="current-temp">--°</div>
+            <div class="current-conditions" id="current-conditions">Loading...</div>
+        </div>
+        
+        <div class="forecast-container" id="forecast-container">
+            <!-- Forecast days will be inserted here -->
+        </div>
+        
+        <div class="error-message" id="error-message">
+            Could not load weather data. Please check your connection and reload.
+        </div>
+        
+        <div class="settings">
+            <div>Last updated: <span id="last-updated">Never</span></div>
+            <div>Auto refresh: Every <span id="refresh-interval">30</span> minutes</div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const CONFIG = {
+            apiKey: 'YOUR_OPENWEATHERMAP_API_KEY', // Replace with your API key
+            city: 'Stockholm', // Default city
+            units: 'metric', // 'metric' or 'imperial'
+            refreshInterval: 30 // minutes
+        };
+
+        // Get URL parameters to allow customization
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('city')) CONFIG.city = params.get('city');
+            if (params.get('units')) CONFIG.units = params.get('units');
+            if (params.get('refresh')) CONFIG.refreshInterval = parseInt(params.get('refresh'));
+            if (params.get('apiKey')) CONFIG.apiKey = params.get('apiKey');
+            
+            // Update display
+            document.getElementById('refresh-interval').textContent = CONFIG.refreshInterval;
+        }
+
+        // Update the date and time
+        function updateDateTime() {
+            const now = new Date();
+            const options = { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            };
+            document.getElementById('datetime').textContent = now.toLocaleDateString(undefined, options);
+            document.getElementById('last-updated').textContent = now.toLocaleTimeString();
+        }
+
+        // Get weather icon representation
+        function getWeatherIcon(code) {
+            // Simple text-based icons for e-ink display
+            if (code >= 200 && code < 300) return '⚡'; // Thunderstorm
+            if (code >= 300 && code < 400) return '🌧️'; // Drizzle
+            if (code >= 500 && code < 600) return '☔'; // Rain
+            if (code >= 600 && code < 700) return '❄️'; // Snow
+            if (code >= 700 && code < 800) return '🌫️'; // Atmosphere (fog, mist)
+            if (code === 800) return '☀️'; // Clear
+            if (code > 800) return '☁️'; // Clouds
+            return '?';
+        }
+
+        // Format temperature based on units
+        function formatTemp(temp) {
+            const roundedTemp = Math.round(temp);
+            return `${roundedTemp}°${CONFIG.units === 'metric' ? 'C' : 'F'}`;
+        }
+
+        // Get the day name from a timestamp
+        function getDayName(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleDateString(undefined, { weekday: 'long' });
+        }
+
+        // Fetch weather data from OpenWeatherMap API
+        async function fetchWeatherData() {
+            try {
+                // Current weather
+                const currentResponse = await fetch(
+                    `https://api.openweathermap.org/data/2.5/weather?q=${CONFIG.city}&units=${CONFIG.units}&appid=${CONFIG.apiKey}`
+                );
+                const currentData = await currentResponse.json();
+                
+                // 5-day forecast
+                const forecastResponse = await fetch(
+                    `https://api.openweathermap.org/data/2.5/forecast?q=${CONFIG.city}&units=${CONFIG.units}&appid=${CONFIG.apiKey}`
+                );
+                const forecastData = await forecastResponse.json();
+                
+                updateWeatherDisplay(currentData, forecastData);
+                document.getElementById('error-message').style.display = 'none';
+            } catch (error) {
+                console.error('Error fetching weather data:', error);
+                document.getElementById('error-message').style.display = 'block';
+            }
+        }
+
+        // Update the weather display with fetched data
+        function updateWeatherDisplay(current, forecast) {
+            // Update location
+            document.getElementById('location').textContent = `${current.name}, ${current.sys.country}`;
+            
+            // Update current weather
+            document.getElementById('current-temp').textContent = formatTemp(current.main.temp);
+            document.getElementById('current-conditions').textContent = 
+                `${current.weather[0].description} ${getWeatherIcon(current.weather[0].id)}`;
+            
+            // Process forecast data to get daily forecasts
+            const dailyForecasts = {};
+            
+            forecast.list.forEach(item => {
+                const date = new Date(item.dt * 1000);
+                const day = date.toISOString().split('T')[0];
+                
+                if (!dailyForecasts[day]) {
+                    dailyForecasts[day] = {
+                        dayName: getDayName(item.dt),
+                        temps: [],
+                        icons: [],
+                        descriptions: []
+                    };
+                }
+                
+                dailyForecasts[day].temps.push(item.main.temp);
+                dailyForecasts[day].icons.push(item.weather[0].id);
+                dailyForecasts[day].descriptions.push(item.weather[0].description);
+            });
+            
+            // Create the forecast displays
+            const forecastContainer = document.getElementById('forecast-container');
+            forecastContainer.innerHTML = '';
+            
+            Object.values(dailyForecasts).slice(0, 5).forEach(day => {
+                // Calculate high and low temps
+                const highTemp = Math.max(...day.temps);
+                const lowTemp = Math.min(...day.temps);
+                
+                // Find most common weather condition
+                const modeMap = {};
+                let maxCount = 0;
+                let modeIcon = day.icons[0];
+                
+                day.icons.forEach(icon => {
+                    if (!modeMap[icon]) modeMap[icon] = 0;
+                    modeMap[icon]++;
+                    
+                    if (modeMap[icon] > maxCount) {
+                        maxCount = modeMap[icon];
+                        modeIcon = icon;
+                    }
+                });
+                
+                const dayElement = document.createElement('div');
+                dayElement.className = 'forecast-day';
+                dayElement.innerHTML = `
+                    <div class="day-name">${day.dayName}</div>
+                    <div class="forecast-icon">
+                        <span class="weather-icon">${getWeatherIcon(modeIcon)}</span>
+                    </div>
+                    <div class="forecast-temp">
+                        <span class="high-temp">${formatTemp(highTemp)}</span>
+                        <span class="low-temp">${formatTemp(lowTemp)}</span>
+                    </div>
+                `;
+                
+                forecastContainer.appendChild(dayElement);
+            });
+            
+            // Update date and time
+            updateDateTime();
+        }
+
+        // Initialize the app
+        function init() {
+            getUrlParams();
+            updateDateTime();
+            fetchWeatherData();
+            
+            // Set up auto-refresh
+            setInterval(() => {
+                fetchWeatherData();
+            }, CONFIG.refreshInterval * 60 * 1000);
+        }
+
+        // Start the app when the page loads
+        window.onload = init;
+    </script>
+</body>
+</html>
